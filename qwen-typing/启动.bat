@@ -1,48 +1,17 @@
 ﻿@echo off
-cd /d "%~dp0"
-title 语音输入 启动
+rem 启动语音输入。等同于双击 tools\静默启动.vbs —— 全程不弹窗口,
+rem 服务就绪后右下角会弹一条「语音输入已就绪」。
+rem
+rem 这里只做转发,不自己启动:双击 .bat 时 Windows 必然先开一个控制台窗口,
+rem 这一点从 bat 内部消除不掉,所以让它一闪就关。真正的启动逻辑只有一份,
+rem 放在 vbs 里,开机自启的快捷方式也指向它,避免两处实现各自漂移。
+rem
+rem 启动失败时 vbs 会弹窗提示;想看加载进度,看 logs\server.log。
 
-set PY=%~dp0.venv\Scripts\python.exe
-set AHK=%LOCALAPPDATA%\Programs\AutoHotkey\v2\AutoHotkey64.exe
-
-if not exist "%PY%" (
-    echo [错误] 未找到虚拟环境 %PY%
-    echo 请先双击 tools\安装.bat 创建环境并安装依赖。
+if not exist "%~dp0tools\静默启动.vbs" (
+    echo [错误] 未找到 tools\静默启动.vbs
     pause
     exit /b 1
 )
 
-if not exist "%AHK%" (
-    echo [错误] 未找到 AutoHotkey v2: %AHK%
-    echo 请先安装 AutoHotkey v2。
-    pause
-    exit /b 1
-)
-
-rem 已有实例在运行时先退出,避免端口冲突
-"%PY%" "%~dp0tools\停止全部.py" >nul 2>&1
-
-echo 正在启动转写服务(首次启动要加载模型,请稍候)...
-start "语音输入(Qwen) server" /min "%PY%" "%~dp0server.py"
-
-echo 等待模型加载完成...
-"%PY%" "%~dp0tools\等待就绪.py"
-if errorlevel 1 (
-    echo.
-    echo [错误] 服务未能在超时时间内就绪。
-    echo 请查看 logs\server.log 末尾的错误信息。
-    pause
-    exit /b 1
-)
-
-echo 注册热键并启动听写脚本...
-start "" "%AHK%" "%~dp0dictate.ahk"
-
-rem 热键名从 config.ini 读,避免提示语与配置不一致
-set HK=
-for /f "tokens=2 delims==" %%k in ('findstr /b /c:"key=" "%~dp0config.ini"') do set HK=%%k
-
-echo.
-echo 启动完成。按住 %HK% 说话,松手后文字会插入当前光标处。
-echo 退出请右键点击右下角托盘图标,选「退出(并停止服务)」。
-timeout /t 8 >nul
+start "" wscript.exe "%~dp0tools\静默启动.vbs"
