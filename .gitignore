@@ -14,8 +14,8 @@ logs/
 models/
 .cache/
 
-# 静态 KV cache 预热用的真人录音。仓库是公开的,录音不进版本库。
-# 缺这个文件时 server.py 会跳过静态 cache,功能正常但每条慢 3 倍。
+# 静态 KV cache 预热用的语音。这是 tools/生成预热语音.py 的生成产物,不是源码,
+# 所以不入库;server.py 启动时发现文件缺失会自己再生成一份。
 qwen-typing/tools/预热.wav
 
 # 编辑器与系统生成的文件

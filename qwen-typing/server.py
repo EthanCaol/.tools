@@ -22,6 +22,7 @@
 import configparser
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -62,8 +63,12 @@ STATIC_CACHE_WANTED = CFG.getboolean("model", "static_cache", fallback=True)
 # 所以必须用两个不同长度预热:PyTorch 在前两个形状各编译一次之后会自动
 # 切换到动态形状,此后任意长度都不再重编译。少于两个,第一个真实请求
 # 就要现编译,会卡好几秒。
+#
+# 这两个长度同时是 tools/预热.wav 的长度下限:音频不够长会被零补齐,而补零等于
+# 静音输入 —— 模型只输出起止标记就停,解码循环跑不起来,编译不触发。改大这里的
+# 值,要确认 wav 还够长(它现在是 16 秒,启动时会检查)。
 STATIC_WARMUP_SECONDS = (5, 15)
-# 预热后的验证长度,故意取一个没预热过的值
+# 预热后的验证长度,故意取一个没预热过的值。同样不能超过 wav 时长。
 STATIC_PROBE_SECONDS = 9
 # 探针耗时上限。亚秒级正常;超过这个值说明动态形状没切过去,应当回退。
 STATIC_PROBE_LIMIT = 3.0
@@ -398,18 +403,49 @@ def transcribe(audio):
 
 
 WARMUP_WAV = ROOT / "tools" / "预热.wav"
+WARMUP_GEN = ROOT / "tools" / "生成预热语音.py"
+
+
+def ensure_warmup_wav():
+    """预热语音不存在时用系统语音合成生成一份。
+
+    这段音频只要求「是真实语音、能生成足够多的 token」,用谁的声音都行,所以
+    仓库里存生成脚本而不是音频本身 —— 音频是几百 KB 的二进制,脚本是纯文本,
+    而且生成出来的不是录制者的声音,放公开仓库没有顾虑。
+    """
+    if WARMUP_WAV.exists() or not WARMUP_GEN.exists():
+        return WARMUP_WAV.exists()
+
+    log(f"未找到 {WARMUP_WAV.name},调用 {WARMUP_GEN.name} 生成 ...")
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(WARMUP_GEN)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=180,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log(f"生成预热语音失败: {type(exc).__name__}: {exc}")
+        return False
+
+    if proc.returncode != 0 or not WARMUP_WAV.exists():
+        detail = (proc.stdout or "") + (proc.stderr or "")
+        log(f"生成预热语音失败:{detail.strip()[:200]}")
+        return False
+
+    log("预热语音已生成")
+    return True
 
 
 def load_warmup_audio():
     """读取预热用的真实语音。
 
     试过静音、白噪、门控噪声、交替方波、扫频,全部只产出 4 个 token 且文本为空
-    —— 模型直接输出起止标记,解码循环没走完,编译不触发。只有真实语音才算数,
-    所以这里用一段真人录音,拿它的不同长度切片预热。
+    —— 模型直接输出起止标记,解码循环没走完,编译不触发。只有真实语音才算数。
+    内容是什么、谁说的都不重要,所以文件缺失时由 ensure_warmup_wav() 现生成一段。
     """
     import wave
 
-    if not WARMUP_WAV.exists():
+    if not ensure_warmup_wav():
         return None
     with wave.open(str(WARMUP_WAV), "rb") as w:
         if w.getnchannels() != 1 or w.getsampwidth() != 2:
@@ -439,6 +475,15 @@ def warmup():
         log(f"未找到 {WARMUP_WAV.name} 或格式不符,静态 KV cache 需要真实语音预热,"
             "本次跳过(服务按默认模式运行,功能不受影响)")
         return
+
+    # 时长检查。短于需要的长度会被零补齐,而补零等价于静音输入:模型只输出起止
+    # 标记就停,解码循环跑不起来,编译不触发 —— 也就是白预热一场。这个失败不报错,
+    # 只表现为「每条都慢 3 倍」,所以在这里主动喊一声。
+    longest = max(max(STATIC_WARMUP_SECONDS), STATIC_PROBE_SECONDS)
+    have = len(speech) / SAMPLE_RATE
+    if have < longest:
+        log(f"警告:{WARMUP_WAV.name} 只有 {have:.1f}s,短于需要的 {longest}s,"
+            "超出部分会用静音补齐,静态 cache 很可能不生效")
 
     # 必须在预热循环之前置位:generate() 读的就是这个标志,
     # 先预热后置位等于用默认 cache 预热,白跑。
