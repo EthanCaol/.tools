@@ -1,0 +1,25 @@
+# Python 虚拟环境(体积最大的一块,qwen-typing 的 .venv 约 3.4 GB)
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+
+# 运行期产物:服务日志、听写日志、PID 文件
+logs/
+*.log
+*.pid
+
+# 模型权重与下载缓存
+models/
+.cache/
+
+# 静态 KV cache 预热用的真人录音。仓库是公开的,录音不进版本库。
+# 缺这个文件时 server.py 会跳过静态 cache,功能正常但每条慢 3 倍。
+qwen-typing/tools/预热.wav
+
+# 编辑器与系统生成的文件
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
